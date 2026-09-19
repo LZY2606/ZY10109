@@ -68,8 +68,46 @@ export function processNameValues(
 | `delimiter` | `"."` | `entriesToObject`, `setPathValue`, `processNameValues` | Controls how dot-like path chunks are split. |
 | `skipEmpty` | `true` | `entriesToObject`, `processNameValues` | Drops `""` and `null` values unless you opt out. |
 | `allowUnsafePathSegments` | `false` | `entriesToObject`, `setPathValue` | Blocks prototype-pollution path segments unless you explicitly trust the source. |
+| `allowEscapedSegments` | `false` | `entriesToObject`, `setPathValue` | Treats `\.`, `\[`, `\]`, `\\` as literal characters instead of path syntax. |
 | `schema` | unset | `entriesToObject` | Runs `schema.parse(parsedObject)` and returns schema output type. |
 | `context` | fresh merge context | `setPathValue` | Keeps indexed array compaction stable across multiple writes. |
+
+
+### Semantic layer
+
+The path and value decisions used by every adapter are exported as pure
+functions and namespaces. Adapters translate environment input into entries
+(with optional `source` provenance) and consume the same aggregate output; see
+[Semantic Layer Contract](../SEMANTICS.md) for the boundary rules.
+
+```ts
+import { merge, tokens, aggregateEntries } from "@form2js/core";
+
+const { result, conflicts } = aggregateEntries(
+  [{ key: "items[5].name", value: "Neo" }],
+  { skipEmpty: false }
+);
+
+// result: { items: [{ name: "Neo" }] }
+// conflicts: [] on a clean merge; array/object collisions are reported here
+void merge;
+void tokens;
+```
+
+| Export | Purpose |
+| --- | --- |
+| `tokens.splitPathParts`, `tokens.tokenizePath` | One tokenizer for read and write paths; honors `allowEscapedSegments`. |
+| `containers.inspectContainerSlot`, `containers.ensureNamedArray` | Container selection; distinguishes missing keys from explicit `undefined`. |
+| `merge.aggregateEntries`, `merge.applyPathValue`, `merge.getMergeConflicts` | Shared merge loop, single-write application, conflict inspection. |
+| `flatten.flattenToEntries`, `flatten.flattenToNameValues` | Object/array flattening with legacy enumeration and sparse-array behavior. |
+| `safety.assertPathIsSafe` | Dangerous-segment rejection (`__proto__`, `prototype`, `constructor`). |
+| `capability.supported/coerced/unsupported/dropped` | Explicit capability results for values an environment cannot express. |
+| `records.*` | Null-prototype own-property storage helpers. |
+| `Entry.source` | Provenance tag (`{ adapter, kind }`) attached by boundary layers. |
+
+`ParseOptions.allowEscapedSegments` (default `false`) protects `\.`, `\[`,
+`\]` and `\\` before splitting, so `full\.name` becomes one property named
+`full.name` instead of two nested properties.
 
 ### Schema validation
 

@@ -1,4 +1,8 @@
-import { objectToEntries, type Entry } from "@form2js/core";
+import {
+  flattenToEntries,
+  tokens as semanticsTokens,
+  type Entry
+} from "@form2js/core";
 
 const ARRAY_ITEM_REGEXP = /\[[0-9]+?\]$/;
 const LAST_INDEXED_ARRAY_REGEXP = /(.*)(\[)([0-9]*)(\])$/;
@@ -30,38 +34,6 @@ type ArrayIndexesMap = Record<
     };
   }
 >;
-
-interface BracketMatch {
-  content: string;
-  index: number;
-  text: string;
-}
-
-function findBracketMatches(input: string): BracketMatch[] {
-  const matches: BracketMatch[] = [];
-  let cursor = 0;
-
-  while (cursor < input.length) {
-    const startIndex = input.indexOf("[", cursor);
-    if (startIndex === -1) {
-      break;
-    }
-
-    const endIndex = input.indexOf("]", startIndex + 1);
-    if (endIndex === -1) {
-      break;
-    }
-
-    matches.push({
-      content: input.slice(startIndex + 1, endIndex),
-      index: startIndex,
-      text: input.slice(startIndex, endIndex + 1)
-    });
-    cursor = endIndex + 1;
-  }
-
-  return matches;
-}
 
 function isNodeObject(value: unknown): value is Node {
   return typeof value === "object" && value !== null && "nodeType" in value && "nodeName" in value;
@@ -130,7 +102,7 @@ function normalizeName(name: string, delimiter: string, arrayIndexes: ArrayIndex
   const normalizedRawChunks: string[] = [];
 
   for (const rawChunk of rawChunks) {
-    const bracketMatches = findBracketMatches(rawChunk);
+    const bracketMatches = semanticsTokens.findBracketMatches(rawChunk);
     if (bracketMatches.length === 0) {
       normalizedRawChunks.push(rawChunk);
       continue;
@@ -392,14 +364,11 @@ function setValue(
 }
 
 function toPathEntries(data: unknown): Entry[] {
-  return objectToEntries(data).map((entry) => ({
-    key: entry.key,
-    value: entry.value
-  }));
+  return flattenToEntries(data, { adapter: "js2form" });
 }
 
 export function flattenDataForForm(data: unknown): Entry[] {
-  return toPathEntries(data);
+  return flattenToEntries(data);
 }
 
 export function mapFieldsByName(

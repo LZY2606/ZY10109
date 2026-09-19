@@ -1,4 +1,10 @@
-import { entriesToObject, type Entry, type ObjectTree, type ParseOptions } from "@form2js/core";
+import {
+  merge as semantics,
+  type Entry,
+  type EntrySource,
+  type ObjectTree,
+  type ParseOptions
+} from "@form2js/core";
 
 export interface NodeCallbackResult {
   name?: string;
@@ -63,6 +69,27 @@ function isNodeDisabled(node: Node): boolean {
 
 function isFormControlNode(node: Node): node is HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement {
   return isInputNode(node) || isTextareaNode(node) || isSelectNode(node);
+}
+
+
+function createEntrySource(nodeOrKind: Node | string): EntrySource {
+  if (typeof nodeOrKind === "string") {
+    return { adapter: "dom", kind: nodeOrKind };
+  }
+
+  if (isSelectNode(nodeOrKind)) {
+    return { adapter: "dom", kind: nodeOrKind.multiple ? "select-multiple" : "select" };
+  }
+
+  if (isInputNode(nodeOrKind)) {
+    return { adapter: "dom", kind: `input:${nodeOrKind.type.toLowerCase()}` };
+  }
+
+  if (isTextareaNode(nodeOrKind)) {
+    return { adapter: "dom", kind: "textarea" };
+  }
+
+  return { adapter: "dom" };
 }
 
 function getFirstLegendChild(fieldset: Element): Element | null {
@@ -236,12 +263,12 @@ function getFieldValue(fieldNode: Node, getDisabled: boolean): unknown {
   return null;
 }
 
-function getSubFormValues(rootNode: Node, options: ExtractOptions): Entry[] {
+function getSubFormValues(rootNode: Node, options: ExtractOptions, attachSource: boolean): Entry[] {
   const result: Entry[] = [];
   let currentNode: ChildNode | null = rootNode.firstChild;
 
   while (currentNode) {
-    const extractedValues = extractNodeValues(currentNode, options);
+    const extractedValues = extractNodeValues(currentNode, options, attachSource);
     if (extractedValues !== SKIP_NODE) {
       result.push(...extractedValues);
     }
@@ -251,7 +278,7 @@ function getSubFormValues(rootNode: Node, options: ExtractOptions): Entry[] {
   return result;
 }
 
-function extractNodeValues(node: Node, options: ExtractOptions): Entry[] | typeof SKIP_NODE {
+function extractNodeValues(node: Node, options: ExtractOptions, attachSource: boolean): Entry[] | typeof SKIP_NODE {
   if (isEffectivelyDisabledControl(node) && !options.getDisabled) {
     return [];
   }
@@ -266,7 +293,9 @@ function extractNodeValues(node: Node, options: ExtractOptions): Entry[] | typeo
   if (callbackResult && (callbackResult.name || callbackResult.key)) {
     const key = callbackResult.key ?? callbackResult.name ?? "";
     if (key !== "") {
-      return [{ key, value: callbackResult.value }];
+      return attachSource
+        ? [{ key, value: callbackResult.value, source: createEntrySource("node-callback") }]
+        : [{ key, value: callbackResult.value }];
     }
   }
 
@@ -276,19 +305,33 @@ function extractNodeValues(node: Node, options: ExtractOptions): Entry[] | typeo
       return [];
     }
 
-    return [{ key: fieldName, value: fieldValue }];
+    if (fieldValue === null) {
+      return [];
+    }
+
+    return attachSource
+      ? [{ key: fieldName, value: fieldValue, source: createEntrySource(node) }]
+      : [{ key: fieldName, value: fieldValue }];
   }
 
   if (fieldName !== "" && isSelectNode(node)) {
     const fieldValue = getFieldValue(node, options.getDisabled ?? false);
-    return [{ key: fieldName.replace(/\[\]$/, ""), value: fieldValue }];
+    return attachSource
+      ? [
+          {
+            key: fieldName.replace(/\[\]$/, ""),
+            value: fieldValue,
+            source: createEntrySource(node)
+          }
+        ]
+      : [{ key: fieldName.replace(/\[\]$/, ""), value: fieldValue }];
   }
 
-  return getSubFormValues(node, options);
+  return getSubFormValues(node, options, attachSource);
 }
 
-function getFormValues(rootNode: Node, options: ExtractOptions): Entry[] {
-  const directResult = extractNodeValues(rootNode, options);
+function getFormValues(rootNode: Node, options: ExtractOptions, attachSource: boolean): Entry[] {
+  const directResult = extractNodeValues(rootNode, options, attachSource);
   if (directResult === SKIP_NODE) {
     return [];
   }
@@ -297,10 +340,14 @@ function getFormValues(rootNode: Node, options: ExtractOptions): Entry[] {
     return directResult;
   }
 
-  return getSubFormValues(rootNode, options);
+  return getSubFormValues(rootNode, options, attachSource);
 }
 
-export function extractPairs(rootNode: RootNodeInput, options: ExtractOptions = {}): Entry[] {
+function collectPairs(
+  rootNode: RootNodeInput,
+  options: ExtractOptions,
+  attachSource: boolean
+): Entry[] {
   const resolvedRoot = resolveRootNode(rootNode, options);
 
   if (!resolvedRoot) {
@@ -313,7 +360,7 @@ export function extractPairs(rootNode: RootNodeInput, options: ExtractOptions = 
     for (let index = 0; index < resolvedRoot.length; index += 1) {
       const currentNode = resolvedRoot[index];
       if (isNodeObject(currentNode)) {
-        result.push(...getFormValues(currentNode, options));
+        result.push(...getFormValues(currentNode, options, attachSource));
       }
     }
 
@@ -321,29 +368,45 @@ export function extractPairs(rootNode: RootNodeInput, options: ExtractOptions = 
   }
 
   if (isNodeObject(resolvedRoot)) {
-    return getFormValues(resolvedRoot, options);
+    return getFormValues(resolvedRoot, options, attachSource);
   }
 
   return [];
 }
 
-export function formToObject(rootNode: RootNodeInput, options: FormToObjectOptions = {}): ObjectTree {
-  const pairs = extractPairs(rootNode, options);
-  const parseOptions: ParseOptions = {};
+export function extractPairs(rootNode: RootNodeInput, options: ExtractOptions = {}): Entry[] {
+  return collectPairs(rootNode, options, false);
+}
+
+function buildSemanticOptions(
+  options: FormToObjectOptions
+): Parameters<typeof semantics.aggregateEntries>[1] {
+  const semanticOptions: Parameters<typeof semantics.aggregateEntries>[1] = {};
 
   if (options.delimiter !== undefined) {
-    parseOptions.delimiter = options.delimiter;
+    semanticOptions.delimiter = options.delimiter;
   }
 
   if (options.skipEmpty !== undefined) {
-    parseOptions.skipEmpty = options.skipEmpty;
+    semanticOptions.skipEmpty = options.skipEmpty;
   }
 
   if (options.allowUnsafePathSegments !== undefined) {
-    parseOptions.allowUnsafePathSegments = options.allowUnsafePathSegments;
+    semanticOptions.allowUnsafePathSegments = options.allowUnsafePathSegments;
   }
 
-  return entriesToObject(pairs, parseOptions);
+  if (options.allowEscapedSegments !== undefined) {
+    semanticOptions.allowEscapedSegments = options.allowEscapedSegments;
+  }
+
+  return semanticOptions;
+}
+
+export function formToObject(rootNode: RootNodeInput, options: FormToObjectOptions = {}): ObjectTree {
+  const pairs = collectPairs(rootNode, options, true);
+  const semanticOptions = buildSemanticOptions(options);
+  const { result } = semantics.aggregateEntries(pairs, semanticOptions);
+  return result;
 }
 
 export function form2js(
