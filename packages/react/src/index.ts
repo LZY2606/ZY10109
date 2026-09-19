@@ -1,5 +1,17 @@
-import { formDataToObject, type InferSchemaOutput, type ObjectTree, type ParseOptions, type SchemaValidator } from "@form2js/form-data";
+import { formDataToObject, type AdapterCapabilities, type InferSchemaOutput, type ObjectTree, type ParseOptions, type SchemaValidator } from "@form2js/form-data";
 import { useCallback, useRef, useState, type SyntheticEvent } from "react";
+
+export const capabilities: AdapterCapabilities = {
+  adapter: "@form2js/react",
+  direction: "read",
+  fileValues: true,
+  nullValues: false,
+  explicitUndefined: false,
+  emptyCollections: false,
+  booleanControls: false,
+  escapedPaths: false,
+  sparseArrays: false
+};
 
 export type UseForm2jsData<TSchema extends SchemaValidator | undefined> =
   TSchema extends SchemaValidator ? InferSchemaOutput<TSchema> : ObjectTree;

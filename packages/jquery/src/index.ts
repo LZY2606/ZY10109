@@ -1,4 +1,21 @@
-import { form2js, type FormToObjectNodeCallback, type RootNodeInput } from "@form2js/dom";
+import {
+  form2js,
+  type AdapterCapabilities,
+  type FormToObjectNodeCallback,
+  type RootNodeInput
+} from "@form2js/dom";
+
+export const capabilities: AdapterCapabilities = {
+  adapter: "@form2js/jquery",
+  direction: "read",
+  fileValues: false,
+  nullValues: false,
+  explicitUndefined: false,
+  emptyCollections: true,
+  booleanControls: true,
+  escapedPaths: false,
+  sparseArrays: false
+};
 
 export type ToObjectMode = "first" | "all" | "combine";
 

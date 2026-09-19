@@ -1,4 +1,25 @@
-import { entriesToObject, type Entry, type ObjectTree, type ParseOptions } from "@form2js/core";
+import {
+  reduceEntries,
+  withSource,
+  type AdapterCapabilities,
+  type ObjectTree,
+  type ParseOptions,
+  type SourcedEntry
+} from "@form2js/core";
+
+const DOM_ADAPTER = "@form2js/dom";
+
+export const capabilities: AdapterCapabilities = {
+  adapter: DOM_ADAPTER,
+  direction: "read",
+  fileValues: false,
+  nullValues: false,
+  explicitUndefined: false,
+  emptyCollections: true,
+  booleanControls: true,
+  escapedPaths: false,
+  sparseArrays: false
+};
 
 export interface NodeCallbackResult {
   name?: string;
@@ -55,6 +76,30 @@ function isTextareaNode(node: Node): node is HTMLTextAreaElement {
 
 function isSelectNode(node: Node): node is HTMLSelectElement {
   return nodeNameIs(node, "SELECT");
+}
+
+function getControlKind(node: Node): string {
+  if (isInputNode(node)) {
+    const inputType = node.type.toLowerCase();
+    if (inputType === "checkbox" || inputType === "radio" || inputType === "file") {
+      return inputType;
+    }
+    return "text";
+  }
+
+  if (isTextareaNode(node)) {
+    return "textarea";
+  }
+
+  if (isSelectNode(node)) {
+    return "select";
+  }
+
+  return "node";
+}
+
+function sourcedEntry(key: string, value: unknown, control: string): SourcedEntry {
+  return withSource({ key, value }, { adapter: DOM_ADAPTER, control });
 }
 
 function isNodeDisabled(node: Node): boolean {
@@ -236,8 +281,8 @@ function getFieldValue(fieldNode: Node, getDisabled: boolean): unknown {
   return null;
 }
 
-function getSubFormValues(rootNode: Node, options: ExtractOptions): Entry[] {
-  const result: Entry[] = [];
+function getSubFormValues(rootNode: Node, options: ExtractOptions): SourcedEntry[] {
+  const result: SourcedEntry[] = [];
   let currentNode: ChildNode | null = rootNode.firstChild;
 
   while (currentNode) {
@@ -251,7 +296,7 @@ function getSubFormValues(rootNode: Node, options: ExtractOptions): Entry[] {
   return result;
 }
 
-function extractNodeValues(node: Node, options: ExtractOptions): Entry[] | typeof SKIP_NODE {
+function extractNodeValues(node: Node, options: ExtractOptions): SourcedEntry[] | typeof SKIP_NODE {
   if (isEffectivelyDisabledControl(node) && !options.getDisabled) {
     return [];
   }
@@ -266,7 +311,7 @@ function extractNodeValues(node: Node, options: ExtractOptions): Entry[] | typeo
   if (callbackResult && (callbackResult.name || callbackResult.key)) {
     const key = callbackResult.key ?? callbackResult.name ?? "";
     if (key !== "") {
-      return [{ key, value: callbackResult.value }];
+      return [sourcedEntry(key, callbackResult.value, "callback")];
     }
   }
 
@@ -276,18 +321,18 @@ function extractNodeValues(node: Node, options: ExtractOptions): Entry[] | typeo
       return [];
     }
 
-    return [{ key: fieldName, value: fieldValue }];
+    return [sourcedEntry(fieldName, fieldValue, getControlKind(node))];
   }
 
   if (fieldName !== "" && isSelectNode(node)) {
     const fieldValue = getFieldValue(node, options.getDisabled ?? false);
-    return [{ key: fieldName.replace(/\[\]$/, ""), value: fieldValue }];
+    return [sourcedEntry(fieldName.replace(/\[\]$/, ""), fieldValue, "select")];
   }
 
   return getSubFormValues(node, options);
 }
 
-function getFormValues(rootNode: Node, options: ExtractOptions): Entry[] {
+function getFormValues(rootNode: Node, options: ExtractOptions): SourcedEntry[] {
   const directResult = extractNodeValues(rootNode, options);
   if (directResult === SKIP_NODE) {
     return [];
@@ -300,7 +345,7 @@ function getFormValues(rootNode: Node, options: ExtractOptions): Entry[] {
   return getSubFormValues(rootNode, options);
 }
 
-export function extractPairs(rootNode: RootNodeInput, options: ExtractOptions = {}): Entry[] {
+export function extractPairs(rootNode: RootNodeInput, options: ExtractOptions = {}): SourcedEntry[] {
   const resolvedRoot = resolveRootNode(rootNode, options);
 
   if (!resolvedRoot) {
@@ -308,7 +353,7 @@ export function extractPairs(rootNode: RootNodeInput, options: ExtractOptions = 
   }
 
   if (isNodeListLike(resolvedRoot)) {
-    const result: Entry[] = [];
+    const result: SourcedEntry[] = [];
 
     for (let index = 0; index < resolvedRoot.length; index += 1) {
       const currentNode = resolvedRoot[index];
@@ -343,7 +388,7 @@ export function formToObject(rootNode: RootNodeInput, options: FormToObjectOptio
     parseOptions.allowUnsafePathSegments = options.allowUnsafePathSegments;
   }
 
-  return entriesToObject(pairs, parseOptions);
+  return reduceEntries(pairs, parseOptions);
 }
 
 export function form2js(
@@ -375,3 +420,11 @@ export function form2js(
 
   return formToObject(rootNode, normalizedOptions);
 }
+
+export type {
+  AdapterCapabilities,
+  CapabilityKey,
+  CapabilityResult,
+  EntrySource,
+  SourcedEntry
+} from "@form2js/core";

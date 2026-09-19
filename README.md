@@ -19,6 +19,7 @@ It is not a serializer, not an ORM, and not a new religion. It just does this on
 - [Docs Site](https://maxatwork.github.io/form2js/) - overview, installation, unified playground, and published API reference.
 - [Migration Guide](https://maxatwork.github.io/form2js/migrate/) - map old `form2js` and `jquery.toObject` usage to the current package family.
 - [API Reference Source](docs/api-index.md) - markdown source for the published API docs page.
+- [Semantics Layer](SEMANTICS.md) - the shared path/value semantics in `@form2js/core`, adapter boundaries, and the cross-package capability matrix.
 
 ## Migration from Legacy
 

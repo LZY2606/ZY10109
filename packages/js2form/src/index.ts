@@ -1,8 +1,28 @@
-import { objectToEntries, type Entry } from "@form2js/core";
+import {
+  hasOwn,
+  mergeRepeatedValue,
+  objectToEntries,
+  setOwn,
+  splitPathParts,
+  type AdapterCapabilities,
+  type Entry
+} from "@form2js/core";
 
 const ARRAY_ITEM_REGEXP = /\[[0-9]+?\]$/;
 const LAST_INDEXED_ARRAY_REGEXP = /(.*)(\[)([0-9]*)(\])$/;
 const ARRAY_OF_ARRAYS_REGEXP = /\[([0-9]+)\]\[([0-9]+)\]/g;
+
+export const capabilities: AdapterCapabilities = {
+  adapter: "@form2js/js2form",
+  direction: "write",
+  fileValues: false,
+  nullValues: false,
+  explicitUndefined: false,
+  emptyCollections: false,
+  booleanControls: true,
+  escapedPaths: false,
+  sparseArrays: false
+};
 
 export type RootNodeInput = string | Node | null | undefined;
 export type ObjectToFormNodeCallback = ((node: Node) => unknown) | null | undefined;
@@ -30,38 +50,6 @@ type ArrayIndexesMap = Record<
     };
   }
 >;
-
-interface BracketMatch {
-  content: string;
-  index: number;
-  text: string;
-}
-
-function findBracketMatches(input: string): BracketMatch[] {
-  const matches: BracketMatch[] = [];
-  let cursor = 0;
-
-  while (cursor < input.length) {
-    const startIndex = input.indexOf("[", cursor);
-    if (startIndex === -1) {
-      break;
-    }
-
-    const endIndex = input.indexOf("]", startIndex + 1);
-    if (endIndex === -1) {
-      break;
-    }
-
-    matches.push({
-      content: input.slice(startIndex + 1, endIndex),
-      index: startIndex,
-      text: input.slice(startIndex, endIndex + 1)
-    });
-    cursor = endIndex + 1;
-  }
-
-  return matches;
-}
 
 function isNodeObject(value: unknown): value is Node {
   return typeof value === "object" && value !== null && "nodeType" in value && "nodeName" in value;
@@ -126,55 +114,7 @@ function shouldSkipNodeAssignment(node: Node, nodeCallback: ObjectToFormNodeCall
 
 function normalizeName(name: string, delimiter: string, arrayIndexes: ArrayIndexesMap): string {
   let nameToNormalize = name;
-  const rawChunks = name.split(delimiter);
-  const normalizedRawChunks: string[] = [];
-
-  for (const rawChunk of rawChunks) {
-    const bracketMatches = findBracketMatches(rawChunk);
-    if (bracketMatches.length === 0) {
-      normalizedRawChunks.push(rawChunk);
-      continue;
-    }
-
-    let currentChunk = "";
-    let cursor = 0;
-
-    for (const match of bracketMatches) {
-      const literalText = rawChunk.slice(cursor, match.index ?? cursor);
-      if (literalText !== "") {
-        currentChunk += literalText;
-      }
-
-      const bracketContent = match.content;
-      const isArraySegment = bracketContent === "" || /^\d+$/.test(bracketContent);
-
-      if (isArraySegment) {
-        if (currentChunk !== "" && currentChunk.endsWith("]")) {
-          normalizedRawChunks.push(currentChunk);
-          currentChunk = "";
-        }
-
-        currentChunk = `${currentChunk}[${bracketContent}]`;
-      } else {
-        if (currentChunk !== "") {
-          normalizedRawChunks.push(currentChunk);
-        }
-
-        currentChunk = bracketContent;
-      }
-
-      cursor = match.index + match.text.length;
-    }
-
-    const trailingText = rawChunk.slice(cursor);
-    if (trailingText !== "") {
-      currentChunk += trailingText;
-    }
-
-    if (currentChunk !== "") {
-      normalizedRawChunks.push(currentChunk);
-    }
-  }
+  const normalizedRawChunks = splitPathParts(name, delimiter);
 
   if (normalizedRawChunks.length > 0) {
     nameToNormalize = normalizedRawChunks.join(delimiter);
@@ -237,28 +177,12 @@ function normalizeName(name: string, delimiter: string, arrayIndexes: ArrayIndex
 }
 
 function mergeField(result: FieldMap, key: string, value: SupportedFieldCollection): void {
-  const existing = result[key];
+  const existing = hasOwn(result, key) ? result[key] : undefined;
+  setOwn(result, key, mergeRepeatedValue(existing, value));
+}
 
-  if (!existing) {
-    result[key] = value;
-    return;
-  }
-
-  if (Array.isArray(existing)) {
-    if (Array.isArray(value)) {
-      existing.push(...value);
-    } else {
-      existing.push(value);
-    }
-    return;
-  }
-
-  if (Array.isArray(value)) {
-    result[key] = [existing, ...value];
-    return;
-  }
-
-  result[key] = value;
+function readField(map: FieldMap, key: string): SupportedFieldCollection | undefined {
+  return hasOwn(map, key) ? map[key] : undefined;
 }
 
 function getFields(
@@ -301,16 +225,16 @@ function getFields(
       }
 
       const normalizedName = normalizeName(name, delimiter, arrayIndexes);
-      result[normalizedName] = currentNode;
+      setOwn(result, normalizedName, currentNode);
 
       const arraySyntaxName = normalizedName.replace(ARRAY_ITEM_REGEXP, "[]");
       if (arraySyntaxName !== normalizedName) {
-        result[arraySyntaxName] = currentNode;
+        setOwn(result, arraySyntaxName, currentNode);
       }
 
       const bareArrayName = normalizedName.replace(ARRAY_ITEM_REGEXP, "");
       if (bareArrayName !== normalizedName) {
-        result[bareArrayName] = currentNode;
+        setOwn(result, bareArrayName, currentNode);
       }
     } else if (isInputNode(currentNode) && /CHECKBOX|RADIO/i.test(currentNode.type)) {
       if (shouldClean) {
@@ -319,15 +243,15 @@ function getFields(
 
       const normalizedName = normalizeName(name, delimiter, arrayIndexes).replace(ARRAY_ITEM_REGEXP, "[]");
 
-      if (!result[normalizedName]) {
-        result[normalizedName] = [];
+      if (!readField(result, normalizedName)) {
+        setOwn(result, normalizedName, []);
       }
 
-      const existing = result[normalizedName];
+      const existing = readField(result, normalizedName);
       if (Array.isArray(existing)) {
         existing.push(currentNode);
-      } else {
-        result[normalizedName] = [existing, currentNode];
+      } else if (existing) {
+        setOwn(result, normalizedName, [existing, currentNode]);
       }
     } else if (isSupportedField(currentNode)) {
       if (shouldClean) {
@@ -335,7 +259,7 @@ function getFields(
       }
 
       const normalizedName = normalizeName(name, delimiter, arrayIndexes);
-      result[normalizedName] = currentNode;
+      setOwn(result, normalizedName, currentNode);
     }
 
     currentNode = currentNode.nextSibling;
@@ -441,20 +365,23 @@ export function objectToForm(rootNode: RootNodeInput, data: unknown, options: Ob
     const fieldName = fieldValue.key;
     const value = fieldValue.value;
 
-    if (formFieldsByName[fieldName]) {
-      setValue(formFieldsByName[fieldName], value, nodeCallback);
+    const directField = readField(formFieldsByName, fieldName);
+    if (directField) {
+      setValue(directField, value, nodeCallback);
       continue;
     }
 
     const arraySyntaxName = fieldName.replace(ARRAY_ITEM_REGEXP, "[]");
-    if (formFieldsByName[arraySyntaxName]) {
-      setValue(formFieldsByName[arraySyntaxName], value, nodeCallback);
+    const arraySyntaxField = readField(formFieldsByName, arraySyntaxName);
+    if (arraySyntaxField) {
+      setValue(arraySyntaxField, value, nodeCallback);
       continue;
     }
 
     const bareArrayName = fieldName.replace(ARRAY_ITEM_REGEXP, "");
-    if (formFieldsByName[bareArrayName]) {
-      setValue(formFieldsByName[bareArrayName], value, nodeCallback);
+    const bareArrayField = readField(formFieldsByName, bareArrayName);
+    if (bareArrayField) {
+      setValue(bareArrayField, value, nodeCallback);
     }
   }
 }
